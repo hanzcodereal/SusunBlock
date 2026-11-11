@@ -60,12 +60,6 @@ class MainActivity : Activity() {
             },
             UiKit.params(this, 12f)
         )
-        root.addView(
-            UiKit.button(this, "Tentang Developer", Color.argb(40, 255, 255, 255), theme.secondaryText) {
-                UiKit.showDeveloperDialog(this)
-            },
-            UiKit.params(this, 12f)
-        )
 
         // Pendorong ke bawah agar kredit berada di dasar layar
         root.addView(
