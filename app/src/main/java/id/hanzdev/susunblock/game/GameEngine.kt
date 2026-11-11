@@ -20,7 +20,7 @@ class GameEngine(private val random: Random = Random.Default) {
     var gameOver = false
     var tutorialMode = false
 
-    private class Candidate(val shapeId: Int, val row: Int, val col: Int, val score: Int)
+    private class Candidate(val shapeId: Int, val row: Int, val col: Int, val score: Float, val lines: Int)
 
     // ---------------------------------------------------------------- Papan
 
@@ -195,7 +195,7 @@ class GameEngine(private val random: Random = Random.Default) {
         pieces[GameConfig.SLOTS / 2] = Piece(example.shapeId, random.nextInt(n))
     }
 
-    // ------------------------------------------- Pembuat blok cerdas (AI)
+    // ------------------------------------------- Pembuat blok cerdas
 
     /** Mengisi semua slot dengan blok baru. false bila tidak ada blok yang bisa dibuat (game over). */
     fun spawnPieces(): Boolean {
@@ -208,56 +208,176 @@ class GameEngine(private val random: Random = Random.Default) {
         return true
     }
 
+    /**
+     * Membuat 3 blok yang masuk akal:
+     *  - ketiganya pasti bisa ditempatkan berurutan di papan saat ini,
+     *  - bentuknya berbeda-beda dan warnanya tidak kembar,
+     *  - papan longgar -> lebih banyak blok besar, papan padat -> lebih banyak blok kecil,
+     *  - papan mulai penuh -> blok pertama kadang diusahakan bisa menghapus garis,
+     *  - penempatan yang rapi (menempel, tanpa lubang terkurung) lebih sering dipilih,
+     *  - makin tinggi skor, makin sulit: bantuan berkurang, blok kecil lebih jarang,
+     *    dan bentuk yang canggung (diagonal, L besar, garis 5) lebih sering muncul.
+     */
     private fun generatePieces(): List<Piece>? {
         val temp = freeGrid()
+        val chosen = ArrayList<Int>()
         val result = ArrayList<Piece>()
-        val colorCount = Themes.all[themeIndex].blockColors.size
-        for (i in 0 until GameConfig.SLOTS) {
-            val cand = findBlockForField(temp, Shapes.largeIds)
-                ?: findBlockForField(temp, Shapes.smallIds)
-                ?: return null
-            result.add(Piece(cand.shapeId, random.nextInt(colorCount)))
+        val colorPool = (0 until Themes.all[themeIndex].blockColors.size).shuffled(random)
+        val difficulty = currentDifficulty()
+
+        for (slot in 0 until GameConfig.SLOTS) {
+            val cand = pickShape(temp, chosen, slot, difficulty) ?: return null
+            chosen.add(cand.shapeId)
+            result.add(Piece(cand.shapeId, colorPool[slot % colorPool.size]))
             simulatePlace(temp, Shapes.all[cand.shapeId], cand.row, cand.col)
         }
         result.shuffle(random)
         return result
     }
 
-    private fun findBlockForField(free: BooleanArray, ids: List<Int>): Candidate? {
-        val candidates = ids.mapNotNull { bestPositionFor(free, Shapes.all[it]) }
-        if (candidates.isEmpty()) return null
-
-        val bestGrade = candidates.maxOf { it.score }
-        val busyPercent = free.count { !it } * 100f / free.size
-        val probability =
-            if (busyPercent >= GameConfig.REQUIRED_BUSY_PERCENT_FOR_BEST_BLOCK) 1f
-            else GameConfig.BETTER_BLOCK_PROBABILITY
-        val threshold = bestGrade * probability
-        val best = candidates.filter { it.score >= threshold }
-        return best[random.nextInt(best.size)]
+    /** Tingkat kesulitan 0..1: naik bertahap mengikuti skor. */
+    private fun currentDifficulty(): Float {
+        val progress = (score / GameConfig.DIFFICULTY_FULL_SCORE).coerceIn(0f, 1f)
+        return GameConfig.DIFFICULTY_BASE + (1f - GameConfig.DIFFICULTY_BASE) * progress
     }
 
-    private fun bestPositionFor(free: BooleanArray, shape: BlockShape): Candidate? {
+    private fun pickShape(free: BooleanArray, chosen: List<Int>, slot: Int, difficulty: Float): Candidate? {
+        var candidates = Shapes.all
+            .filter { it.id !in chosen }
+            .mapNotNull { bestPlacement(free, it) }
+        if (candidates.isEmpty()) candidates = Shapes.all.mapNotNull { bestPlacement(free, it) }
+        if (candidates.isEmpty()) return null
+
+        val busyFraction = free.count { !it } / free.size.toFloat()
+
+        // Papan mulai penuh: kadang beri kesempatan menghapus garis (makin jarang saat kesulitan naik)
+        val helperChance = 0.8f - 0.5f * difficulty
+        if (slot == 0 && busyFraction >= GameConfig.HELPER_BUSY_FRACTION && random.nextFloat() < helperChance) {
+            val clearing = candidates.filter { it.lines > 0 }
+            if (clearing.isNotEmpty()) candidates = clearing
+        }
+
+        val minScore = candidates.minOf { it.score }
+        val maxScore = candidates.maxOf { it.score }
+        val range = (maxScore - minScore).coerceAtLeast(1f)
+
+        val d = difficulty.toDouble()
+        val fit = GameConfig.FIT_WEIGHT * (1.0 - 0.6 * d)
+        val weights = DoubleArray(candidates.size) { i ->
+            val c = candidates[i]
+            val shape = Shapes.all[c.shapeId]
+            val norm = ((c.score - minScore) / range).toDouble()
+            sizeWeight(shape.count, busyFraction, d) * (1.0 + d * awkwardness(shape)) * (1.0 + fit * norm)
+        }
+
+        var r = random.nextDouble() * weights.sum()
+        for (i in candidates.indices) {
+            r -= weights[i]
+            if (r <= 0) return candidates[i]
+        }
+        return candidates.last()
+    }
+
+    /** Bobot menurut ukuran blok: papan kosong -> blok besar, papan padat -> blok kecil. */
+    private fun sizeWeight(count: Int, busyFraction: Float, difficulty: Double): Double {
+        val t = (busyFraction / 0.7f).coerceIn(0f, 1f).toDouble()
+        return when {
+            count >= 8 -> 0.8 * (1.0 - 0.65 * t)
+            count >= 5 -> 1.0 - 0.65 * t
+            count >= 3 -> 1.0
+            else -> (0.35 + 0.95 * t) * (1.0 - 0.5 * difficulty)
+        }
+    }
+
+    /** Seberapa canggung bentuknya: makin banyak ruang kosong di kotak pembungkusnya, makin canggung. */
+    private fun awkwardness(shape: BlockShape): Double {
+        if (shape.count < 3) return 0.0
+        var a = (1.0 - shape.count.toDouble() / (shape.sizeX * shape.sizeY)) * 1.2
+        if (shape.id == 14 || shape.id == 15) a += 0.5 // garis lurus 5 sel
+        return a
+    }
+
+    /** Posisi terbaik untuk [shape] di papan [free], atau null bila tidak muat di mana pun. */
+    private fun bestPlacement(free: BooleanArray, shape: BlockShape): Candidate? {
         var best: Candidate? = null
-        var maxGrade = -1
         for (row in 0..GameConfig.ROWS - shape.sizeY) {
             for (col in 0..GameConfig.COLS - shape.sizeX) {
                 if (!canPlaceAt(free, shape, row, col)) continue
-                val temp = free.copyOf()
-                simulatePlace(temp, shape, row, col)
-                // Blok yang lebih besar mendapat nilai lebih tinggi.
-                val grade = rateField(temp) + shape.count * GameConfig.BLOCK_SIZE_GRADE_MULTIPLIER
-                if (grade > maxGrade) {
-                    maxGrade = grade
-                    best = Candidate(shape.id, row, col, grade)
+                val (score, lines) = evaluate(free, shape, row, col)
+                if (best == null || score > best.score) {
+                    best = Candidate(shape.id, row, col, score, lines)
                 }
             }
         }
         return best
     }
 
-    /** Menaruh blok di grid simulasi (true = kosong) lalu menghapus baris/kolom penuh. */
-    private fun simulatePlace(free: BooleanArray, shape: BlockShape, row: Int, col: Int) {
+    /** Nilai sebuah penempatan: hapus garis (besar), menempel rapi (bagus), lubang terkurung (jelek). */
+    private fun evaluate(free: BooleanArray, shape: BlockShape, row: Int, col: Int): Pair<Float, Int> {
+        var contact = 0
+        var exposed = 0
+        for (y in 0 until shape.sizeY) {
+            for (x in 0 until shape.sizeX) {
+                if (!shape.filled(x, y)) continue
+                val r = row + y
+                val c = col + x
+                for (d in 0 until 4) {
+                    val nr = r + DR[d]
+                    val nc = c + DC[d]
+                    val ly = nr - row
+                    val lx = nc - col
+                    if (ly in 0 until shape.sizeY && lx in 0 until shape.sizeX && shape.filled(lx, ly)) continue
+                    val blocked = nr < 0 || nr >= GameConfig.ROWS || nc < 0 || nc >= GameConfig.COLS ||
+                        !free[nr * GameConfig.COLS + nc]
+                    if (blocked) contact++ else exposed++
+                }
+            }
+        }
+        val temp = free.copyOf()
+        val lines = simulatePlace(temp, shape, row, col)
+        val score = lines * GameConfig.LINE_CLEAR_SCORE + contact - 0.5f * exposed + holePenalty(temp)
+        return Pair(score, lines)
+    }
+
+    /** Hukuman untuk area kosong kecil yang terkurung (sulit terisi blok mana pun). */
+    private fun holePenalty(free: BooleanArray): Float {
+        val visited = BooleanArray(free.size)
+        val stack = IntArray(free.size)
+        var penalty = 0f
+        for (start in free.indices) {
+            if (!free[start] || visited[start]) continue
+            var sp = 0
+            stack[sp++] = start
+            visited[start] = true
+            var size = 0
+            while (sp > 0) {
+                val cur = stack[--sp]
+                size++
+                val r = cur / GameConfig.COLS
+                val c = cur % GameConfig.COLS
+                for (d in 0 until 4) {
+                    val nr = r + DR[d]
+                    val nc = c + DC[d]
+                    if (nr < 0 || nr >= GameConfig.ROWS || nc < 0 || nc >= GameConfig.COLS) continue
+                    val ni = nr * GameConfig.COLS + nc
+                    if (free[ni] && !visited[ni]) {
+                        visited[ni] = true
+                        stack[sp++] = ni
+                    }
+                }
+            }
+            penalty -= when (size) {
+                1 -> GameConfig.HOLE_1_PENALTY
+                2 -> GameConfig.HOLE_2_PENALTY
+                3 -> GameConfig.HOLE_3_PENALTY
+                else -> 0f
+            }
+        }
+        return penalty
+    }
+
+    /** Menaruh blok di grid simulasi (true = kosong), menghapus baris/kolom penuh, mengembalikan jumlah garis. */
+    private fun simulatePlace(free: BooleanArray, shape: BlockShape, row: Int, col: Int): Int {
         val rows = GameConfig.ROWS
         val cols = GameConfig.COLS
         for (y in 0 until shape.sizeY) for (x in 0 until shape.sizeX) {
@@ -267,27 +387,9 @@ class GameEngine(private val random: Random = Random.Default) {
         val fullCols = BooleanArray(cols) { c -> (0 until rows).all { !free[it * cols + c] } }
         for (r in 0 until rows) if (fullRows[r]) for (c in 0 until cols) free[r * cols + c] = true
         for (c in 0 until cols) if (fullCols[c]) for (r in 0 until rows) free[r * cols + c] = true
-    }
-
-    /** Skor = jumlah kuadrat (1 + tetangga kosong) tiap sel kosong; dikali 2 jika papan bersih. */
-    private fun rateField(free: BooleanArray): Int {
-        val rows = GameConfig.ROWS
-        val cols = GameConfig.COLS
-        var score = 0
-        var allClear = true
-        for (r in 0 until rows) for (c in 0 until cols) {
-            if (!free[r * cols + c]) {
-                allClear = false
-                continue
-            }
-            var t = 1
-            if (r > 0 && free[(r - 1) * cols + c]) t++
-            if (r + 1 < rows && free[(r + 1) * cols + c]) t++
-            if (c > 0 && free[r * cols + c - 1]) t++
-            if (c + 1 < cols && free[r * cols + c + 1]) t++
-            score += t * t
-        }
-        if (allClear) score *= GameConfig.ALL_CLEAR_FIELD_MULTIPLIER
-        return score
+        return fullRows.count { it } + fullCols.count { it }
     }
 }
+
+private val DR = intArrayOf(-1, 1, 0, 0)
+private val DC = intArrayOf(0, 0, -1, 1)
