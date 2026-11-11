@@ -9,14 +9,22 @@ import android.view.Gravity
 import android.view.View
 import android.view.animation.OvershootInterpolator
 import android.widget.LinearLayout
+import id.hanzdev.susunblock.game.GameEngine
+import id.hanzdev.susunblock.game.SaveManager
+import id.hanzdev.susunblock.game.Shapes
+import id.hanzdev.susunblock.game.SoundManager
 import id.hanzdev.susunblock.game.Themes
 import id.hanzdev.susunblock.ui.LogoView
 import id.hanzdev.susunblock.ui.UiKit
 
-/** Layar pembuka: logo, nama aplikasi, indikator memuat, dan kredit developer. */
+/**
+ * Layar pembuka: logo, nama aplikasi, dan versi.
+ * Menu dibuka tepat saat persiapan sungguhan selesai, tanpa waktu tunggu buatan.
+ */
 class SplashActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
+    @Volatile private var cancelled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,7 +71,34 @@ class SplashActivity : Activity() {
             v.animate().alpha(1f).setStartDelay(250L + i * 90L).setDuration(500).start()
         }
 
-        handler.postDelayed({ openMenu() }, SPLASH_MS)
+        startLoading()
+    }
+
+    /** Menjalankan persiapan sungguhan di thread latar, lalu membuka menu begitu semuanya selesai. */
+    private fun startLoading() {
+        val app = applicationContext
+        val steps = listOf<() -> Unit>(
+            // Memuat pengaturan: membaca satu nilai memaksa berkas simpanan selesai dimuat.
+            { SaveManager(app).bestScore },
+            // Memuat bentuk dan tema.
+            { check(Shapes.all.isNotEmpty() && Themes.all.isNotEmpty()) },
+            // Menyiapkan efek suara.
+            { SoundManager.preload() },
+            // Memuat mesin game dan menjalankan pembuat blok sekali sebelum permainan dimulai.
+            { GameEngine().newGame() }
+        )
+
+        Thread {
+            for (step in steps) {
+                if (cancelled) return@Thread
+                try {
+                    step()
+                } catch (e: Exception) {
+                    // Persiapan bersifat pelengkap; jika gagal, game tetap dibuka.
+                }
+            }
+            handler.post { openMenu() }
+        }.start()
     }
 
     private fun versionName(): String = try {
@@ -83,11 +118,8 @@ class SplashActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelled = true
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
-    }
-
-    private companion object {
-        const val SPLASH_MS = 2200L
     }
 }
