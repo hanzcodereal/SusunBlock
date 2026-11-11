@@ -2,7 +2,6 @@ package id.hanzdev.susunblock
 
 import android.app.Activity
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,7 +9,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.animation.OvershootInterpolator
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import id.hanzdev.susunblock.game.Themes
 import id.hanzdev.susunblock.ui.LogoView
 import id.hanzdev.susunblock.ui.UiKit
@@ -40,12 +38,7 @@ class SplashActivity : Activity() {
         val title = UiKit.text(this, "Susun Block", 38f, theme.primaryText, bold = true)
         val subtitle = UiKit.text(this, "Game puzzle susun blok", 15f, theme.tertiaryText)
 
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(theme.secondaryText)
-        }
-        val loading = UiKit.text(this, "Memuat...", 13f, theme.secondaryText)
-        val credit = UiKit.text(this, "Dikembangkan oleh ${Dev.NAME}", 13f, theme.tertiaryText)
+        val version = UiKit.text(this, "Versi ${versionName()}", 13f, theme.tertiaryText)
 
         root.addView(spacer())
         root.addView(
@@ -54,10 +47,8 @@ class SplashActivity : Activity() {
         )
         root.addView(title, UiKit.params(this, 20f))
         root.addView(subtitle, UiKit.params(this, 4f))
-        root.addView(progress, UiKit.params(this, 36f, UiKit.dp(this, 160f)))
-        root.addView(loading, UiKit.params(this, 8f))
         root.addView(spacer())
-        root.addView(credit, UiKit.params(this, 0f))
+        root.addView(version, UiKit.params(this, 0f))
 
         setContentView(root)
 
@@ -67,12 +58,19 @@ class SplashActivity : Activity() {
         logo.alpha = 0f
         logo.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(650)
             .setInterpolator(OvershootInterpolator(1.2f)).start()
-        for ((i, v) in listOf<View>(title, subtitle, progress, loading, credit).withIndex()) {
+        for ((i, v) in listOf<View>(title, subtitle, version).withIndex()) {
             v.alpha = 0f
             v.animate().alpha(1f).setStartDelay(250L + i * 90L).setDuration(500).start()
         }
 
         handler.postDelayed({ openMenu() }, SPLASH_MS)
+    }
+
+    private fun versionName(): String = try {
+        @Suppress("DEPRECATION")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
+    } catch (e: Exception) {
+        "1.0.0"
     }
 
     @Suppress("DEPRECATION")
