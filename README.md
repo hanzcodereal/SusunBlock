@@ -21,13 +21,14 @@ Game puzzle susun blok untuk Android, dibuat dengan **Kotlin**. Seret blok ke pa
 
 ## Fitur
 
+- **Layar pembuka** – logo, nama aplikasi, indikator memuat, dan kredit developer
 - **Blok cerdas** – algoritma menyiapkan blok yang selalu bisa ditempatkan di papan saat ini
 - **4 tema warna** – tema berganti saat kamu menghapus 2 garis atau lebih sekaligus
 - **Tutorial interaktif** – 3 langkah singkat untuk pemain baru
 - **Skor, kombo, dan bonus "Semua Bersih!"**
 - **Simpan otomatis** – progres tersimpan setiap langkah
 - **Main ulang** – tombol Jeda (roda gigi) berisi Lanjutkan, Main Ulang, Pengaturan, dan Menu Utama; tutorial juga bisa diulang dari Pengaturan
-- **Kontak developer** – dialog rapi dengan tombol Kirim Email, Salin Email, dan Dukung Developer
+- **Kontak developer** – dialog rapi dengan tombol Kirim Email, Salin Email, dan Dukung Developer (dibuka dari Pengaturan)
 - **Efek suara & getaran** – bisa dimatikan di Pengaturan (suara dibuat lewat kode, tanpa berkas audio)
 - Seluruh teks permainan dalam **Bahasa Indonesia**
 
@@ -99,6 +100,7 @@ base64 -w0 release.jks   # salin hasilnya ke secret KEYSTORE_BASE64
 
 ```
 app/src/main/java/id/hanzdev/susunblock/
+├── SplashActivity.kt      # Layar pembuka (logo, nama, kredit)
 ├── MainActivity.kt        # Menu utama
 ├── GameActivity.kt        # Layar permainan
 ├── SettingsActivity.kt    # Pengaturan
