@@ -215,7 +215,8 @@ class GameEngine(private val random: Random = Random.Default) {
      *  - papan longgar -> lebih banyak blok besar, papan padat -> lebih banyak blok kecil,
      *  - papan mulai penuh -> blok pertama kadang diusahakan bisa menghapus garis,
      *  - penempatan yang rapi (menempel, tanpa lubang terkurung) lebih sering dipilih,
-     *  - makin tinggi skor, makin sulit: bantuan berkurang, blok kecil lebih jarang,
+     *  - tiap bentuk punya pengali dasar sendiri di [Shapes.baseWeight] untuk mengatur seberapa sering muncul,
+ *  - makin tinggi skor, makin sulit: bantuan berkurang, blok kecil lebih jarang,
      *    dan bentuk yang canggung (diagonal, L besar, garis 5) lebih sering muncul.
      */
     private fun generatePieces(): List<Piece>? {
@@ -267,7 +268,8 @@ class GameEngine(private val random: Random = Random.Default) {
             val c = candidates[i]
             val shape = Shapes.all[c.shapeId]
             val norm = ((c.score - minScore) / range).toDouble()
-            sizeWeight(shape.count, busyFraction, d) * (1.0 + d * awkwardness(shape)) * (1.0 + fit * norm)
+            Shapes.baseWeight(c.shapeId) * sizeWeight(shape.count, busyFraction, d) *
+                (1.0 + d * awkwardness(shape)) * (1.0 + fit * norm)
         }
 
         var r = random.nextDouble() * weights.sum()

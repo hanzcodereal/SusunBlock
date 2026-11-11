@@ -49,6 +49,36 @@ object Shapes {
         s(38, 1, 1, "1")
     )
 
+    /**
+     * Pengali peluang dasar tiap bentuk (1.0 = normal, 2.0 = dua kali lebih sering, 0.0 = tidak pernah muncul).
+     * Ini hanya "tuas" dasar; pembuat blok cerdas tetap menyesuaikan dengan kondisi papan dan kesulitan.
+     * Bentuk yang tidak tercantum dianggap 1.0.
+     */
+    private val baseWeights: Map<Int, Double> = mapOf(
+        // Blok besar
+        0 to 1.0,   // garis tegak 4
+        1 to 1.0, 2 to 1.0, 3 to 1.0, 4 to 1.0, 5 to 1.0, 6 to 1.0,
+        7 to 1.0,   // kotak 2x2
+        8 to 1.7,   // persegi panjang 3x2
+        9 to 2.8,   // kotak 3x3 penuh (sebelumnya paling jarang muncul)
+        10 to 1.2, 11 to 1.2, 12 to 1.2, 13 to 1.2, // L besar 3x3
+        14 to 1.0, 15 to 1.0, // garis 5
+        16 to 1.0,  // garis datar 4
+        17 to 1.0, 18 to 1.0, 19 to 1.0,
+        20 to 1.9,  // persegi panjang 2x3
+        21 to 1.0, 22 to 1.0, 23 to 1.0, 24 to 1.0, 25 to 1.0,
+        26 to 1.0, 27 to 1.0, // garis 3
+        28 to 1.0, 29 to 1.0, // diagonal 3x3
+        // Blok kecil
+        30 to 1.0, 31 to 1.0, 32 to 1.0, 33 to 1.0,
+        34 to 1.4, 35 to 1.4, // domino
+        36 to 1.6,  // dua sel diagonal
+        37 to 1.3,  // diagonal 2x2
+        38 to 1.4   // satu sel
+    )
+
+    fun baseWeight(id: Int): Double = baseWeights[id] ?: 1.0
+
     val largeIds: List<Int> = (0..29).toList()
     val smallIds: List<Int> = (30..38).toList()
 }
