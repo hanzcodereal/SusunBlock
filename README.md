@@ -135,9 +135,17 @@ Buka `game/Themes.kt` dan tambahkan `GameTheme(...)` ke daftar `Themes.all`.
 
 ### Algoritma blok cerdas
 
-1. **Simulasi papan** – menyalin papan lalu mencoba tiap blok di semua posisi
-2. **Penilaian** – tiap sel kosong bernilai (1 + tetangga kosong)², blok lebih besar bernilai lebih tinggi
-3. **Pemilihan** – memilih blok terbaik (acak di antara kandidat teratas), dan makin ketat saat papan terisi ≥ 60%
+Tiga blok baru dibuat satu per satu di atas salinan papan, jadi ketiganya **pasti bisa ditempatkan** (urutan pembuatan = salah satu urutan yang valid):
+
+1. **Nilai penempatan** – tiap bentuk dicoba di semua posisi. Skor: hapus garis (+60 per garis), menempel ke dinding/blok lain (+), sisi menghadap sel kosong (−), dan lubang terkurung 1–3 sel (−).
+2. **Bobot ukuran** – papan longgar lebih sering memberi blok besar; papan padat lebih sering memberi blok kecil (1×1, 1×2, L kecil).
+3. **Bantuan** – saat papan ≥ 50% terisi, blok pertama kadang diusahakan bisa menghapus garis; makin tinggi skor, makin jarang.
+4. **Variasi** – tiga bentuk selalu berbeda dan warnanya tidak kembar.
+5. **Pemilihan** – acak berbobot: penempatan yang rapi lebih sering terpilih, tapi tidak selalu yang terbaik.
+
+6. **Kesulitan bertahap** – naik dari 0,35 ke 1 seiring skor (penuh di skor 8000): bantuan berkurang, blok kecil lebih jarang, dan bentuk canggung (diagonal, L besar, garis 5) lebih sering muncul. Tiga blok tetap selalu bisa ditempatkan.
+
+Konstanta ada di `game/GameConfig.kt`.
 
 ## Kredit & Lisensi
 
