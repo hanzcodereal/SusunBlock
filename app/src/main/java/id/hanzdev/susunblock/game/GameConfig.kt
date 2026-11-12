@@ -1,19 +1,24 @@
 package id.hanzdev.susunblock.game
 
-/** Konstanta permainan (dulu berada di ScriptableObject Settings pada versi Unity). */
+/** Konstanta permainan. */
 object GameConfig {
     const val ROWS = 8
     const val COLS = 8
     const val SLOTS = 3
 
-    // Skor
-    const val LINE_REMOVAL_SCORE = 10
-    const val MULTI_LINE_SCORE = 50
-    const val COMBO_SCORE = 50
-    const val RESET_COMBO_AFTER_MOVES = 3
+    // Skor (mengikuti pola Block Blast: poin per sel, dikali jumlah garis dan pengali kombo)
+    /** Poin per sel yang ikut terhapus. Satu baris penuh = 8 sel = 80 poin. */
+    const val POINTS_PER_CLEARED_CELL = 10
+    /** Tambahan pengali per langkah beruntun: langkah ke-2 x1.5, ke-3 x2, dan seterusnya. */
+    const val COMBO_STEP = 0.5f
+    /** Bonus saat papan benar-benar kosong. */
     const val ALL_CLEAR_BONUS = 1000
 
-    // Pembuat blok cerdas
+    // Pembuat blok klasik: pencarian mundur
+    /** Batas percobaan penempatan saat mencari tiga blok yang bisa dimainkan berurutan. Menjaga kecepatan di HP. */
+    const val SEARCH_BUDGET = 600
+
+    // Pembuat blok tantangan: heuristik kesulitan
     /** Bobot nilai tiap baris/kolom yang bisa dihapus oleh sebuah penempatan. */
     const val LINE_CLEAR_SCORE = 60f
     /** Seberapa besar penempatan yang bagus memengaruhi peluang sebuah blok dipilih. */
