@@ -6,7 +6,9 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import id.hanzdev.susunblock.game.Challenge
 import id.hanzdev.susunblock.game.GameEngine
+import id.hanzdev.susunblock.game.Mode
 import id.hanzdev.susunblock.game.SaveManager
 import id.hanzdev.susunblock.game.SoundManager
 import id.hanzdev.susunblock.ui.GameView
@@ -16,6 +18,8 @@ class GameActivity : Activity() {
     private lateinit var save: SaveManager
     private lateinit var engine: GameEngine
     private lateinit var gameView: GameView
+    /** Setelah data dihapus dari Pengaturan, progres di memori tidak boleh disimpan lagi. */
+    private var dataCleared = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,7 +32,8 @@ class GameActivity : Activity() {
         }
 
         save = SaveManager(this)
-        engine = GameEngine()
+        val mode = Mode.values().firstOrNull { it.name == intent.getStringExtra(EXTRA_MODE) } ?: Mode.CLASSIC
+        engine = GameEngine(mode, Challenge.todayKey())
         save.load(engine)
         val sound = SoundManager(save)
 
@@ -54,6 +59,7 @@ class GameActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_SETTINGS) return
         if (data?.getBooleanExtra(SettingsActivity.EXTRA_CLEARED, false) == true) {
+            dataCleared = true
             gameView.resetAfterDataCleared()
         } else if (data?.getBooleanExtra(SettingsActivity.EXTRA_REPLAY_TUTORIAL, false) == true) {
             gameView.replayTutorial()
@@ -67,7 +73,7 @@ class GameActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        if (!engine.tutorialMode) save.save(engine)
+        if (!engine.tutorialMode && !dataCleared) save.save(engine)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -89,5 +95,7 @@ class GameActivity : Activity() {
 
     private companion object {
         const val REQ_SETTINGS = 1001
+        /** Nama [Mode] yang dibuka: CLASSIC atau CHALLENGE. */
+        const val EXTRA_MODE = "extra_mode"
     }
 }
