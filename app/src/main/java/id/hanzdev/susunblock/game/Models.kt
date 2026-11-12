@@ -23,8 +23,10 @@ class MoveResult(
     val colsCleared: Int,
     val cleared: List<ClearedCell>,
     val allClear: Boolean,
-    /** Nilai kombo yang ditampilkan, 0 jika tidak ada. */
-    val comboShown: Int
+    /** Poin yang didapat dari langkah ini, sudah termasuk pengali kombo. */
+    val gained: Int,
+    /** Jumlah langkah beruntun yang menghapus garis, termasuk langkah ini. 0 bila langkah ini tidak menghapus. */
+    val streak: Int
 ) {
     val linesCleared: Int get() = rowsCleared + colsCleared
 }
