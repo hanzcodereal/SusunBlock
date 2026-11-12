@@ -15,6 +15,7 @@ import id.hanzdev.susunblock.game.BlockShape
 import id.hanzdev.susunblock.game.ClearedCell
 import id.hanzdev.susunblock.game.GameConfig
 import id.hanzdev.susunblock.game.GameEngine
+import id.hanzdev.susunblock.game.Mode
 import id.hanzdev.susunblock.game.GameTheme
 import id.hanzdev.susunblock.game.SaveManager
 import id.hanzdev.susunblock.game.SoundManager
@@ -112,6 +113,12 @@ class GameView(
     private var bestAtStart = 0
     private var newBestThisGame = false
 
+    // ---- Poin yang baru didapat (muncul di atas blok yang diletakkan)
+    private var gainText = ""
+    private var gainT0 = 0L
+    private var gainX = 0f
+    private var gainY = 0f
+
     // ---- Menu jeda (0 = tutup, 1 = menu, 2 = konfirmasi main ulang)
     private var pauseMode = 0
     private val pauseBtns = Array(4) { RectF() }
@@ -131,11 +138,19 @@ class GameView(
     // =========================================================== Siklus hidup
 
     fun startTutorialIfNeeded() {
-        if (!save.tutorialDone) startTutorial()
+        if (engine.mode == Mode.CLASSIC && !save.tutorialDone) startTutorial()
     }
+
+    /** Mode yang boleh mengulang permainan setelah selesai (tantangan hanya sekali sehari). */
+    private fun canRetry(): Boolean = engine.mode == Mode.CLASSIC
 
     /** Dipanggil setelah semua data dihapus dari menu pengaturan. */
     fun resetAfterDataCleared() {
+        if (engine.mode == Mode.CHALLENGE) {
+            // Data sudah dihapus: tutup layar agar tidak menyimpan ulang progres lama
+            callbacks.onExitToMenu()
+            return
+        }
         engine.bestScore = 0
         engine.newGame()
         bestAtStart = 0
@@ -232,6 +247,7 @@ class GameView(
         drawSlots(canvas)
         drawPicked(canvas)
         drawPopups(canvas)
+        drawGain(canvas)
         if (engine.tutorialMode) drawTutorialOverlay(canvas)
         if (engine.gameOver) drawGameOver(canvas)
         if (pauseMode != 0) drawPause(canvas)
@@ -248,6 +264,7 @@ class GameView(
 
         if (pickedSlot >= 0 || retSlot >= 0 || engine.tutorialMode || engine.gameOver) animating = true
         if (now - comboT0 < COMBO_MS || now - allClearT0 < ALL_CLEAR_MS) animating = true
+        if ((now - gainT0).toFloat() < GAIN_MS) animating = true
         for (t in spawnT0) if (now - t < SPAWN_MS) animating = true
 
         if (animating) postInvalidateOnAnimation()
@@ -265,9 +282,10 @@ class GameView(
 
         if (engine.tutorialMode) return
 
-        // Skor terbaik di kiri atas (tanpa label), skor sekarang besar di tengah
+        // Kiri atas: skor terbaik (klasik) atau target (tantangan). Skor sekarang besar di tengah.
+        val corner = if (engine.mode == Mode.CHALLENGE) "Target ${engine.target}" else engine.bestScore.toString()
         drawText(
-            canvas, engine.bestScore.toString(), vw / 2f - 2.59f * u, vh / 2f - 5.26f * u,
+            canvas, corner, vw / 2f - 2.59f * u, vh / 2f - 5.26f * u,
             0.45f * u, secondary, bold = true, align = Paint.Align.LEFT
         )
         drawText(
@@ -429,6 +447,15 @@ class GameView(
         }
     }
 
+    /** Poin yang baru didapat, muncul di atas blok yang diletakkan lalu memudar. */
+    private fun drawGain(canvas: Canvas) {
+        val p = (now - gainT0).toFloat() / GAIN_MS
+        if (p !in 0f..1f || gainText.isEmpty()) return
+        val alpha = ((1f - p) * 255).toInt()
+        val primary = readable(themeMix { it.primaryText })
+        drawText(canvas, gainText, gainX, gainY - (0.3f + 0.9f * p) * u, 0.4f * u, primary, alpha)
+    }
+
     private fun drawTutorialOverlay(canvas: Canvas) {
         val ex = TutorialData.examples.getOrNull(tutIndex) ?: return
         val primary = readable(themeMix { it.primaryText })
@@ -492,7 +519,21 @@ class GameView(
             canvas, (engine.score * count).roundToInt().toString(), vw / 2f, top + ph * 0.40f,
             vw * 0.11f, primary, alpha
         )
-        if (newBestThisGame) {
+        if (engine.mode == Mode.CHALLENGE) {
+            val reached = engine.score >= engine.target
+            if (reached) {
+                val blink = 0.4f + 0.6f * (0.5f + 0.5f * sin(now / 250.0 * PI).toFloat())
+                drawText(
+                    canvas, "TARGET TERCAPAI!", vw / 2f, top + ph * 0.50f,
+                    vw * 0.05f, tertiary, (alpha * blink).toInt()
+                )
+            } else {
+                drawText(
+                    canvas, "Target: ${engine.target}", vw / 2f, top + ph * 0.50f,
+                    vw * 0.045f, secondary, alpha
+                )
+            }
+        } else if (newBestThisGame) {
             val blink = 0.4f + 0.6f * (0.5f + 0.5f * sin(now / 250.0 * PI).toFloat())
             drawText(
                 canvas, "SKOR TERBAIK BARU!", vw / 2f, top + ph * 0.50f,
@@ -508,9 +549,15 @@ class GameView(
         val bw = pw * 0.8f
         val bh = ph * 0.15f
         val bl = (vw - bw) / 2f
-        btnAgain.set(bl, top + ph * 0.60f, bl + bw, top + ph * 0.60f + bh)
-        btnMenu.set(bl, top + ph * 0.79f, bl + bw, top + ph * 0.79f + bh)
-        drawButton(canvas, btnAgain, "Main Lagi", themeMix { it.secondaryText }, themeMix { it.background }, alpha)
+        if (canRetry()) {
+            btnAgain.set(bl, top + ph * 0.60f, bl + bw, top + ph * 0.60f + bh)
+            btnMenu.set(bl, top + ph * 0.79f, bl + bw, top + ph * 0.79f + bh)
+            drawButton(canvas, btnAgain, "Main Lagi", themeMix { it.secondaryText }, themeMix { it.background }, alpha)
+        } else {
+            // Tantangan hanya sekali sehari: tidak ada tombol main lagi
+            btnAgain.setEmpty()
+            btnMenu.set(bl, top + ph * 0.66f, bl + bw, top + ph * 0.66f + bh)
+        }
         drawButton(canvas, btnMenu, "Menu Utama", withAlpha(Color.WHITE, 40), Color.WHITE, alpha)
     }
 
@@ -633,7 +680,7 @@ class GameView(
         }
         if (engine.gameOver) {
             if (now - goT0 < GAME_OVER_DELAY_MS) return true
-            if (btnAgain.contains(x, y)) {
+            if (canRetry() && btnAgain.contains(x, y)) {
                 sound.button()
                 restartGame()
             } else if (btnMenu.contains(x, y)) {
@@ -785,9 +832,22 @@ class GameView(
             engine.nextTheme()
             themeT0 = t
         }
-        if (res.comboShown > 0) {
-            comboText = "Kombo ${res.comboShown}"
+        // Target tercapai, atau kombo (langkah beruntun yang menghapus garis)
+        val before = engine.score - res.gained
+        if (engine.mode == Mode.CHALLENGE && !engine.tutorialMode &&
+            before < engine.target && engine.score >= engine.target
+        ) {
+            comboText = "Target tercapai!"
             comboT0 = t
+        } else if (res.streak >= 2) {
+            comboText = "Kombo x${res.streak}"
+            comboT0 = t
+        }
+        if (res.gained > 0 && !engine.tutorialMode) {
+            gainText = "+${res.gained}"
+            gainT0 = t
+            gainX = gridX + (res.placedCols.average().toFloat() + 0.5f) * cell
+            gainY = gridY + (res.placedRows.average().toFloat() + 0.5f) * cell
         }
         if (res.allClear && !engine.tutorialMode) {
             allClearT0 = t
@@ -842,7 +902,7 @@ class GameView(
     // ============================================================ Menu jeda
 
     private fun pauseLabels(): List<String> = when (pauseMode) {
-        1 -> if (engine.tutorialMode) {
+        1 -> if (engine.tutorialMode || !canRetry()) {
             listOf("Lanjutkan", "Pengaturan", "Menu Utama")
         } else {
             listOf("Lanjutkan", "Main Ulang", "Pengaturan", "Menu Utama")
@@ -933,6 +993,7 @@ class GameView(
 
     /** Memutar ulang tutorial (permainan yang berjalan dimulai dari awal setelah tutorial). */
     fun replayTutorial() {
+        if (engine.mode != Mode.CLASSIC) return
         pauseMode = 0
         pickedSlot = -1
         retSlot = -1
@@ -997,5 +1058,6 @@ class GameView(
         const val COMBO_MS = 750f
         const val ALL_CLEAR_MS = 900f
         const val GAME_OVER_DELAY_MS = 1100L
+        const val GAIN_MS = 700f
     }
 }
