@@ -93,7 +93,7 @@ class GameActivity : Activity() {
             )
     }
 
-    private companion object {
+    companion object {
         const val REQ_SETTINGS = 1001
         /** Nama [Mode] yang dibuka: CLASSIC atau CHALLENGE. */
         const val EXTRA_MODE = "extra_mode"
