@@ -22,7 +22,8 @@ Game puzzle susun blok untuk Android, dibuat dengan **Kotlin**. Seret blok ke pa
 ## Fitur
 
 - **Layar pembuka** – logo, nama aplikasi, indikator memuat, dan kredit developer
-- **Blok cerdas** – algoritma menyiapkan blok yang selalu bisa ditempatkan di papan saat ini
+- **Dua mode** – *Klasik* (tanpa batas) dan *Tantangan* (papan sudah terisi blok acak, urutan blok sama untuk semua pemain setiap hari, dengan target skor)
+- **Blok acak yang selalu bisa dimainkan** – tiga blok dijamin bisa ditempatkan berurutan di papan saat ini
 - **4 tema warna** – tema berganti saat kamu menghapus 2 garis atau lebih sekaligus
 - **Tutorial interaktif** – 3 langkah singkat untuk pemain baru
 - **Skor, kombo, dan bonus "Semua Bersih!"**
@@ -40,15 +41,26 @@ Game puzzle susun blok untuk Android, dibuat dengan **Kotlin**. Seret blok ke pa
 4. Kosongkan seluruh papan untuk bonus **+1000**.
 5. Permainan selesai saat tidak ada blok yang muat.
 
-### Rumus skor
+### Tantangan
+
+- Papan dimulai dengan beberapa blok acak yang sudah terpasang (10–18 sel). Blok awal ini tidak memberi skor.
+- Setiap hari ada satu tantangan dengan **target skor** (1500–3000). Tanggal yang sama menghasilkan urutan blok dan target yang sama untuk semua pemain.
+- Tantangan hanya bisa dimainkan **sekali sehari**. Progres tersimpan, jadi kalau aplikasi ditutup, permainan dilanjutkan dari posisi terakhir.
+- Tanggal diambil dari jam perangkat (zona waktu lokal), dan tantangan baru muncul saat hari berganti.
+
+### Rumus skor (pola Block Blast)
 
 | Aksi | Poin |
 |---|---|
 | Tiap sel blok yang diletakkan | +1 |
-| Tiap baris/kolom terhapus | +10 × 8 |
-| Hapus beberapa garis sekaligus | + garis² × 50 |
-| Kombo | + garis² × 50 × kombo |
+| Tiap sel yang ikut terhapus | +10 × jumlah garis yang terhapus sekaligus |
+| Pengali kombo | langkah beruntun ke-n dikali (1 + 0,5 × (n − 1)) |
 | Papan bersih | +1000 |
+
+Contoh: satu baris terhapus = 8 sel × 10 = 80 poin. Dua baris sekaligus = 15 sel unik (sel perpotongan dihitung sekali) × 10 × 2 = 300 poin.
+Kombo putus bila satu langkah tidak menghapus garis apa pun.
+
+> Rumus Block Blast asli tidak dipublikasikan. Angka di atas adalah pola yang umum dipahami dari permainannya, dan semua konstantanya ada di `game/GameConfig.kt` sehingga mudah diubah.
 
 ## Build
 
@@ -102,11 +114,13 @@ base64 -w0 release.jks   # salin hasilnya ke secret KEYSTORE_BASE64
 app/src/main/java/id/hanzdev/susunblock/
 ├── SplashActivity.kt      # Layar pembuka (logo, nama, kredit)
 ├── MainActivity.kt        # Menu utama
-├── GameActivity.kt        # Layar permainan
+├── GameActivity.kt        # Layar permainan (mode klasik atau tantangan)
 ├── SettingsActivity.kt    # Pengaturan
 ├── Dev.kt                 # Info developer
 ├── game/
-│   ├── GameEngine.kt      # Papan, skor, kombo, pembuat blok cerdas
+│   ├── GameEngine.kt      # Papan, skor, kombo, pembuat blok
+│   ├── Challenge.kt  # Tanggal, target, dan seed tantangan
+│   ├── ReplayRandom.kt    # Generator acak berseed untuk tantangan
 │   ├── Shapes.kt          # Daftar bentuk blok
 │   ├── Themes.kt          # Tema warna
 │   ├── TutorialData.kt    # Contoh tutorial
@@ -133,19 +147,26 @@ s(39, 3, 2, "110011"),   // id, lebar, tinggi, sel (1 = terisi, baris demi baris
 
 Buka `game/Themes.kt` dan tambahkan `GameTheme(...)` ke daftar `Themes.all`.
 
-### Algoritma blok cerdas
+### Pembuat blok
 
-Tiga blok baru dibuat satu per satu di atas salinan papan, jadi ketiganya **pasti bisa ditempatkan** (urutan pembuatan = salah satu urutan yang valid):
+Setiap mode memakai generator sendiri:
 
-1. **Nilai penempatan** – tiap bentuk dicoba di semua posisi. Skor: hapus garis (+60 per garis), menempel ke dinding/blok lain (+), sisi menghadap sel kosong (−), dan lubang terkurung 1–3 sel (−).
-2. **Bobot ukuran** – papan longgar lebih sering memberi blok besar; papan padat lebih sering memberi blok kecil (1×1, 1×2, L kecil).
-3. **Bantuan** – saat papan ≥ 50% terisi, blok pertama kadang diusahakan bisa menghapus garis; makin tinggi skor, makin jarang.
-4. **Variasi** – tiga bentuk selalu berbeda dan warnanya tidak kembar.
-5. **Pemilihan** – acak berbobot: penempatan yang rapi lebih sering terpilih, tapi tidak selalu yang terbaik.
+**Klasik** (pola Block Blast):
+1. **Bentuk acak berbobot** – tiap bentuk punya bobot dasar di `Shapes.baseWeight()`. Bentuk boleh berulang.
+2. **Posisi acak + pencarian mundur** – tiap blok diletakkan di posisi acak yang muat. Bila jalan buntu, pencarian mundur mencoba posisi atau bentuk lain (maksimal 600 percobaan).
+3. **Jaminan bisa dimainkan** – tiga blok yang keluar selalu bisa ditempatkan berurutan (uji: semua pemunculan bisa dimainkan).
+4. **Papan hampir penuh** – bila tidak ada tiga blok yang muat, blok yang bisa dimainkan tetap diberikan. Game berakhir bila tidak ada satu pun yang muat.
 
-6. **Kesulitan bertahap** – naik dari 0,35 ke 1 seiring skor (penuh di skor 8000): bantuan berkurang, blok kecil lebih jarang, dan bentuk canggung (diagonal, L besar, garis 5) lebih sering muncul. Tiga blok tetap selalu bisa ditempatkan.
+**Tantangan** (heuristik kesulitan):
+1. **Kecocokan penempatan** – setiap bentuk dinilai dari posisi terbaiknya: menghapus garis, menempel rapi, dan tidak meninggalkan lubang kosong yang terkurung.
+2. **Kesulitan naik bertahap** – dari 0,35 sampai 1 mengikuti skor (penuh di 8000 poin). Makin sulit, makin jarang blok yang pas, makin sering blok canggung.
+3. **Bantuan** – saat papan mulai penuh, blok pertama kadang diusahakan bisa menghapus garis. Peluangnya berkurang seiring kesulitan.
+4. **Ukuran menyesuaikan papan** – papan kosong lebih sering memberi blok besar, papan padat lebih sering memberi blok kecil.
+
+Algoritma asli Block Blast tidak dipublikasikan, jadi mode Klasik mengikuti perilakunya yang bisa diamati, bukan kode aslinya.
 
 Konstanta ada di `game/GameConfig.kt`.
+
 
 ## Kredit & Lisensi
 
