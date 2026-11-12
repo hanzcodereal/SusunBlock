@@ -9,6 +9,8 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import id.hanzdev.susunblock.game.Challenge
+import id.hanzdev.susunblock.game.Mode
 import id.hanzdev.susunblock.game.SaveManager
 import id.hanzdev.susunblock.game.Themes
 import id.hanzdev.susunblock.ui.LogoView
@@ -18,6 +20,7 @@ import id.hanzdev.susunblock.ui.UiKit
 class MainActivity : Activity() {
     private lateinit var save: SaveManager
     private lateinit var bestText: TextView
+    private lateinit var challengeText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,16 +52,23 @@ class MainActivity : Activity() {
         root.addView(bestText, UiKit.params(this, 24f))
 
         root.addView(
-            UiKit.button(this, "Main", theme.field, Color.WHITE) {
-                startActivity(Intent(this, GameActivity::class.java))
-            },
+            UiKit.button(this, "Mode Klasik", theme.field, Color.WHITE) { startGame(Mode.CLASSIC) },
             UiKit.params(this, 28f)
         )
+        root.addView(
+            UiKit.button(this, "Tantangan", Color.argb(40, 255, 255, 255), Color.WHITE) {
+                startGame(Mode.CHALLENGE)
+            },
+            UiKit.params(this, 12f)
+        )
+        challengeText = UiKit.text(this, "", 14f, theme.secondaryText)
+        root.addView(challengeText, UiKit.params(this, 8f))
+
         root.addView(
             UiKit.button(this, "Pengaturan", Color.argb(40, 255, 255, 255), Color.WHITE) {
                 startActivity(Intent(this, SettingsActivity::class.java))
             },
-            UiKit.params(this, 12f)
+            UiKit.params(this, 20f)
         )
 
         // Pendorong ke bawah agar kredit berada di dasar layar
@@ -82,8 +92,21 @@ class MainActivity : Activity() {
         setContentView(scroll)
     }
 
+    private fun startGame(mode: Mode) {
+        startActivity(Intent(this, GameActivity::class.java).putExtra(GameActivity.EXTRA_MODE, mode.name))
+    }
+
     override fun onResume() {
         super.onResume()
         bestText.text = "Skor Terbaik: ${save.bestScore}"
+
+        val key = Challenge.todayKey()
+        val target = Challenge.targetFor(key)
+        val status = save.challengeStatus(key)
+        challengeText.text = when {
+            status.started && status.over -> "Hari ini selesai · skor ${status.score} (target $target)"
+            status.started -> "Sedang berjalan · skor ${status.score} (target $target)"
+            else -> "Target hari ini: $target"
+        }
     }
 }
