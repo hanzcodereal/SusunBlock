@@ -1,12 +1,34 @@
 package id.hanzdev.susunblock.game
 
+import kotlin.math.ln
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
+/** Mode permainan: klasik (tanpa batas) atau tantangan (urutan blok sama untuk semua pemain). */
+enum class Mode { CLASSIC, CHALLENGE }
+
 /**
- * Logika inti permainan: papan 8x8, skor, kombo, dan pembuat blok cerdas.
+ * Logika inti permainan: papan 8x8, skor ala Block Blast, kombo, dan pembuat blok.
  * Tidak bergantung pada Android sehingga mudah diuji.
  */
-class GameEngine(private val random: Random = Random.Default) {
+class GameEngine(
+    val mode: Mode = Mode.CLASSIC,
+    /** Tanggal tantangan (yyyymmdd). Hanya dipakai di mode CHALLENGE. */
+    val challengeKey: Int = 0
+) {
+    private val replay: ReplayRandom? = if (mode == Mode.CHALLENGE) ReplayRandom(challengeKey.toLong()) else null
+    private val random: Random = replay ?: Random.Default
+
+    /** Target skor tantangan (0 di mode klasik). */
+    val target: Int = if (mode == Mode.CHALLENGE) Challenge.targetFor(challengeKey) else 0
+
+    /** Jumlah pemanggilan acak sejauh ini, disimpan agar tantangan bisa dilanjutkan persis. */
+    val randomDraws: Int get() = replay?.draws ?: 0
+
+    /** Memajukan generator acak sebanyak [n] langkah saat memuat permainan. */
+    fun fastForwardRandom(n: Int) {
+        replay?.skip(n)
+    }
 
     /** Indeks warna tiap sel, -1 = kosong. */
     val colors = IntArray(GameConfig.ROWS * GameConfig.COLS) { -1 }
@@ -14,13 +36,17 @@ class GameEngine(private val random: Random = Random.Default) {
 
     var score = 0
     var bestScore = 0
-    var combo = -1
-    var comboReset = 0
-    var themeIndex = 0
+    /** Jumlah langkah beruntun yang menghapus garis. 0 = tidak ada kombo. */
+    var streak = 0
     var gameOver = false
     var tutorialMode = false
+    var themeIndex = 0
 
-    private class Candidate(val shapeId: Int, val row: Int, val col: Int, val score: Float, val lines: Int)
+    // Hasil pencarian tiga blok (lihat findTriplet)
+    private val seq = IntArray(GameConfig.SLOTS)
+    private val bestSeq = IntArray(GameConfig.SLOTS)
+    private var bestDepth = 0
+    private var budget = 0
 
     // ---------------------------------------------------------------- Papan
 
@@ -65,7 +91,7 @@ class GameEngine(private val random: Random = Random.Default) {
         val fullCols = (0 until cols).filter { c -> (0 until rows).all { colors[it * cols + c] >= 0 } }
 
         // Catat dulu semua sel yang akan terhapus, baru dihapus
-        // (supaya baris dan kolom yang berpotongan tidak saling menghilangkan).
+        // (supaya baris dan kolom yang berpotongan tidak dihitung dua kali).
         val cleared = ArrayList<ClearedCell>()
         val seen = HashSet<Int>()
         for (r in fullRows) for (c in 0 until cols) {
@@ -82,28 +108,23 @@ class GameEngine(private val random: Random = Random.Default) {
         val allClear = colors.all { it < 0 }
         val lines = fullRows.size + fullCols.size
 
-        var comboShown = 0
+        var gained = 0
+        var streakShown = 0
         if (!tutorialMode) {
-            score += n
-            score += fullRows.size * GameConfig.LINE_REMOVAL_SCORE * cols
-            score += fullCols.size * GameConfig.LINE_REMOVAL_SCORE * rows
-            if (lines > 1) score += lines * lines * GameConfig.MULTI_LINE_SCORE
-
+            // Pola Block Blast: poin per sel yang diletakkan, lalu poin per sel yang terhapus
+            // dikali jumlah garis, dikali pengali kombo. Kombo putus bila langkah tidak menghapus apa pun.
+            gained += n
             if (lines > 0) {
-                combo += lines
-                comboReset = 0
-            } else if (combo > -1) {
-                comboReset++
-                if (comboReset >= GameConfig.RESET_COMBO_AFTER_MOVES) {
-                    combo = -1
-                    comboReset = 0
-                }
+                streak++
+                val comboMult = 1f + GameConfig.COMBO_STEP * (streak - 1)
+                gained += (cleared.size * GameConfig.POINTS_PER_CLEARED_CELL * lines * comboMult).roundToInt()
+                if (allClear) gained += GameConfig.ALL_CLEAR_BONUS
+                streakShown = streak
+            } else {
+                streak = 0
             }
-            if (combo > 0) score += lines * lines * GameConfig.COMBO_SCORE * combo
-            if (allClear) score += GameConfig.ALL_CLEAR_BONUS
-            if (combo > 0 && lines > 0) comboShown = combo
-
-            if (score > bestScore) bestScore = score
+            score += gained
+            if (mode == Mode.CLASSIC && score > bestScore) bestScore = score
         }
 
         return MoveResult(
@@ -114,8 +135,9 @@ class GameEngine(private val random: Random = Random.Default) {
             rowsCleared = fullRows.size,
             colsCleared = fullCols.size,
             cleared = cleared,
-            allClear = allClear,
-            comboShown = comboShown
+            allClear = allClear && !tutorialMode,
+            gained = gained,
+            streak = streakShown
         )
     }
 
@@ -154,12 +176,7 @@ class GameEngine(private val random: Random = Random.Default) {
         val free = freeGrid()
         for (piece in pieces) {
             if (piece == null) continue
-            val shape = piece.shape
-            for (row in 0..GameConfig.ROWS - shape.sizeY) {
-                for (col in 0..GameConfig.COLS - shape.sizeX) {
-                    if (canPlaceAt(free, shape, row, col)) return true
-                }
-            }
+            if (fittingSpots(free, piece.shape).isNotEmpty()) return true
         }
         return false
     }
@@ -172,13 +189,40 @@ class GameEngine(private val random: Random = Random.Default) {
     fun newGame() {
         colors.fill(-1)
         score = 0
-        combo = -1
-        comboReset = 0
+        streak = 0
         themeIndex = 0
         gameOver = false
         tutorialMode = false
         for (i in pieces.indices) pieces[i] = null
+        if (mode == Mode.CHALLENGE) prefillBoard()
         spawnPieces()
+    }
+
+    /**
+     * Papan awal tantangan: beberapa blok acak sudah terpasang.
+     * Penempatan yang langsung menghapus garis dilewati, supaya tidak ada baris yang hilang di awal.
+     */
+    private fun prefillBoard() {
+        val target = PREFILL_MIN_CELLS + random.nextInt(PREFILL_MAX_CELLS - PREFILL_MIN_CELLS + 1)
+        var filled = 0
+        var attempts = 0
+        while (filled < target && attempts < 200) {
+            attempts++
+            val shape = Shapes.all[randomShapeId()]
+            if (filled + shape.count > target) continue
+            val spots = fittingSpots(freeGrid(), shape).filter { spot ->
+                simulatePlace(freeGrid(), shape, spot / GameConfig.COLS, spot % GameConfig.COLS) == 0
+            }
+            if (spots.isEmpty()) continue
+            val spot = spots[random.nextInt(spots.size)]
+            val row = spot / GameConfig.COLS
+            val col = spot % GameConfig.COLS
+            val color = random.nextInt(Themes.all[themeIndex].blockColors.size)
+            for (y in 0 until shape.sizeY) for (x in 0 until shape.sizeX) {
+                if (shape.filled(x, y)) colors[(row + y) * GameConfig.COLS + col + x] = color
+            }
+            filled += shape.count
+        }
     }
 
     fun nextTheme() {
@@ -195,11 +239,14 @@ class GameEngine(private val random: Random = Random.Default) {
         pieces[GameConfig.SLOTS / 2] = Piece(example.shapeId, random.nextInt(n))
     }
 
-    // ------------------------------------------- Pembuat blok cerdas
+    // ------------------------------------------------------ Pembuat blok
 
-    /** Mengisi semua slot dengan blok baru. false bila tidak ada blok yang bisa dibuat (game over). */
+    /**
+     * Mengisi semua slot dengan blok baru.
+     * Mengembalikan false bila tidak ada satu pun blok yang bisa ditempatkan di papan (game over).
+     */
     fun spawnPieces(): Boolean {
-        val generated = generatePieces()
+        val generated = if (mode == Mode.CHALLENGE) generateHeuristic() else generateBlockBlast()
         if (generated == null) {
             gameOver = true
             return false
@@ -208,24 +255,26 @@ class GameEngine(private val random: Random = Random.Default) {
         return true
     }
 
+    /** Mode klasik: acak berbobot, tiga blok dijamin bisa ditempatkan berurutan. null bila tidak ada yang muat. */
+    private fun generateBlockBlast(): List<Piece>? {
+        findTriplet()
+        if (bestDepth == 0) return null
+        val ids = IntArray(GameConfig.SLOTS) { i -> if (i < bestDepth) bestSeq[i] else randomShapeId() }
+        ids.shuffle(random)
+        val colorPool = (0 until Themes.all[themeIndex].blockColors.size).shuffled(random)
+        return List(GameConfig.SLOTS) { i -> Piece(ids[i], colorPool[i % colorPool.size]) }
+    }
+
     /**
-     * Membuat 3 blok yang masuk akal:
-     *  - ketiganya pasti bisa ditempatkan berurutan di papan saat ini,
-     *  - bentuknya berbeda-beda dan warnanya tidak kembar,
-     *  - papan longgar -> lebih banyak blok besar, papan padat -> lebih banyak blok kecil,
-     *  - papan mulai penuh -> blok pertama kadang diusahakan bisa menghapus garis,
-     *  - penempatan yang rapi (menempel, tanpa lubang terkurung) lebih sering dipilih,
-     *  - tiap bentuk punya pengali dasar sendiri di [Shapes.baseWeight] untuk mengatur seberapa sering muncul,
- *  - makin tinggi skor, makin sulit: bantuan berkurang, blok kecil lebih jarang,
-     *    dan bentuk yang canggung (diagonal, L besar, garis 5) lebih sering muncul.
+     * Mode tantangan: heuristik kesulitan. Tiap blok dipilih dengan mempertimbangkan kecocokan penempatan,
+     * ukuran terhadap kepadatan papan, dan tingkat kesulitan yang naik mengikuti skor.
      */
-    private fun generatePieces(): List<Piece>? {
+    private fun generateHeuristic(): List<Piece>? {
         val temp = freeGrid()
         val chosen = ArrayList<Int>()
         val result = ArrayList<Piece>()
         val colorPool = (0 until Themes.all[themeIndex].blockColors.size).shuffled(random)
         val difficulty = currentDifficulty()
-
         for (slot in 0 until GameConfig.SLOTS) {
             val cand = pickShape(temp, chosen, slot, difficulty) ?: return null
             chosen.add(cand.shapeId)
@@ -378,6 +427,61 @@ class GameEngine(private val random: Random = Random.Default) {
         return penalty
     }
 
+    private class Candidate(val shapeId: Int, val row: Int, val col: Int, val score: Float, val lines: Int)
+
+    /**
+     * Mencari tiga blok yang bisa ditempatkan berurutan di papan saat ini.
+     *
+     * Bentuk dipilih acak berbobot [Shapes.baseWeight], posisinya juga acak. Bila jalan buntu,
+     * pencarian mundur (backtracking) mencoba posisi atau bentuk lain, dibatasi [GameConfig.SEARCH_BUDGET].
+     * Bentuk boleh berulang, seperti di Block Blast. Bila tidak ada tiga blok yang muat,
+     * [bestDepth] berisi jumlah blok terbanyak yang masih bisa dimainkan; sisanya diisi acak.
+     */
+    private fun findTriplet() {
+        bestDepth = 0
+        budget = GameConfig.SEARCH_BUDGET
+        search(freeGrid(), 0)
+    }
+
+    private fun search(free: BooleanArray, depth: Int): Boolean {
+        if (depth > bestDepth) {
+            bestDepth = depth
+            seq.copyInto(bestSeq, 0, 0, depth)
+        }
+        if (depth == GameConfig.SLOTS) return true
+        for (shape in weightedOrder()) {
+            if (budget <= 0) return false
+            for (spot in fittingSpots(free, shape).shuffled(random)) {
+                if (--budget <= 0) return false
+                val next = free.copyOf()
+                simulatePlace(next, shape, spot / GameConfig.COLS, spot % GameConfig.COLS)
+                seq[depth] = shape.id
+                if (search(next, depth + 1)) return true
+            }
+        }
+        return false
+    }
+
+    /** Semua bentuk dalam urutan acak berbobot (exponential race: peluang pertama sebanding dengan bobot). */
+    private fun weightedOrder(): List<BlockShape> =
+        Shapes.all
+            .map { s -> s to -ln(1.0 - random.nextDouble()) / Shapes.baseWeight(s.id) }
+            .sortedBy { it.second }
+            .map { it.first }
+
+    private fun randomShapeId(): Int = weightedOrder().first().id
+
+    /** Semua posisi (indeks row*COLS+col) tempat [shape] muat di papan [free]. */
+    private fun fittingSpots(free: BooleanArray, shape: BlockShape): List<Int> {
+        val out = ArrayList<Int>()
+        for (row in 0..GameConfig.ROWS - shape.sizeY) {
+            for (col in 0..GameConfig.COLS - shape.sizeX) {
+                if (canPlaceAt(free, shape, row, col)) out.add(row * GameConfig.COLS + col)
+            }
+        }
+        return out
+    }
+
     /** Menaruh blok di grid simulasi (true = kosong), menghapus baris/kolom penuh, mengembalikan jumlah garis. */
     private fun simulatePlace(free: BooleanArray, shape: BlockShape, row: Int, col: Int): Int {
         val rows = GameConfig.ROWS
@@ -395,3 +499,6 @@ class GameEngine(private val random: Random = Random.Default) {
 
 private val DR = intArrayOf(-1, 1, 0, 0)
 private val DC = intArrayOf(0, 0, -1, 1)
+
+private const val PREFILL_MIN_CELLS = 10
+private const val PREFILL_MAX_CELLS = 18
